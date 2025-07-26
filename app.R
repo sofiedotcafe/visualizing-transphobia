@@ -12,6 +12,7 @@ library(DBI)
 library(RSQLite)
 library(visNetwork)
 library(bslib)
+library(colourpicker)
 
 # `file.copy` is overridden to prevent copying file permissions, which causes "Permission denied" errors on NixOS and similar immutable systems.
 # The patch provided in the pull requests does not work because it does not patch the SASS precompiler package.
@@ -27,8 +28,41 @@ assign("file.copy", function(...) {
 base::lockBinding("file.copy", asNamespace("base"))
 
 ui <- navbarPage(
-  title = "Influence Network Analysis",
+  title = "Visualizing Transphobia",
   theme = bs_theme(precompiled = TRUE, precompile = FALSE),
+  header = tagList(
+    # JavaScript to activate Bootstrap tooltips
+    tags$script(HTML('
+      $(function () {
+        $(\'[data-bs-toggle="tooltip"]\').tooltip();
+      });
+    ')),
+
+    # Style for absolute positioning in navbar
+    tags$style(HTML("
+      .github-icon {
+        position: absolute;
+        right: 20px;
+        top: 12px;
+        font-size: 20px;
+        color: #333;
+      }
+      .github-icon:hover {
+        color: #000;
+      }
+    ")),
+
+    # The GitHub icon with tooltip
+    tags$a(
+      href = "https://github.com/sofiedotcafe/visualizing-transphobia",
+      target = "_blank",
+      class = "github-icon",
+      `data-bs-toggle` = "tooltip",
+      `data-bs-placement` = "bottom",
+      title = "View on GitHub",
+      icon("github")
+    )
+  ),
   tabPanel(
     title = "Network Visualization",
     fluidRow(
@@ -39,7 +73,37 @@ ui <- navbarPage(
           selectInput("selectedNode", "Select Node to Highlight:", choices = NULL),
           tags$hr(),
           p("Use the dropdown to highlight a node in the network."),
-          p("Hover over nodes for details. Zoom and pan with mouse.")
+          p("Hover over nodes for details. Zoom and pan with mouse."),
+          tags$hr(),
+          h4("Physics Settings"),
+          selectInput("solver", "Physics Solver:",
+            choices = c("barnesHut", "forceAtlas2Based", "repulsion", "hierarchicalRepulsion"),
+            selected = "barnesHut"
+          ),
+          numericInput("gravitationalConstant", "Gravitational Constant:", value = -1500, step = 100),
+          numericInput("centralGravity", "Central Gravity:", value = 0.05, min = 0, max = 1, step = 0.01),
+          numericInput("springLength", "Spring Length:", value = 150, min = 10, max = 500),
+          numericInput("springConstant", "Spring Constant:", value = 0.05, min = 0, max = 1, step = 0.01),
+          numericInput("damping", "Damping:", value = 0.5, min = 0, max = 1, step = 0.01),
+          numericInput("avoidOverlap", "Avoid Overlap:", value = 0.4, min = 0, max = 1, step = 0.01),
+          numericInput("maxVelocity", "Max Velocity:", value = 50, min = 1, max = 500),
+          numericInput("stabilizationIterations", "Stabilization Iterations:", value = 500, min = 0, max = 2000),
+          tags$hr(),
+          h4("Node Styling"),
+          colourInput("color_person", "Person Node Color", value = "skyblue"),
+          colourInput("color_group", "Group Node Color", value = "lightgreen"),
+          colourInput("color_defunct", "Defunct Node Color", value = "gray"),
+          colourInput("color_pseudoscientific", "Pseudoscientific Theory Color", value = "pink"),
+          numericInput("node_min_size", "Node Min Size", value = 10, min = 1, max = 50),
+          numericInput("node_max_size", "Node Max Size", value = 30, min = 1, max = 100),
+          tags$hr(),
+          h4("Edge Styling"),
+          checkboxInput("smooth_edges", "Smooth Edges", value = FALSE),
+          checkboxInput("arrows_to", "Show Arrows", value = TRUE),
+          tags$hr(),
+          h4("Highlight Options"),
+          checkboxInput("highlight_nearest", "Highlight Nearest Nodes", value = TRUE),
+          numericInput("highlight_degree", "Highlight Degree", value = 1, min = 1, max = 10)
         )
       ),
       column(
@@ -51,12 +115,12 @@ ui <- navbarPage(
   tabPanel(
     title = "About",
     fluidPage(
-      h3("Network Influence Visualization"),
+      h3("Visualizing Transphobia"),
       p("This visualization explores structural influence networks within transphobic discourse, pseudoscientific medical affiliations, and ideologically motivated bias dissemination."),
       p("Data is sourced from various academic and investigative research, aggregated into a SQLite database."),
       p("Use the 'Network Visualization' tab to explore nodes and connections interactively."),
       p("This work is released under the Creative Commons CC0 1.0 Public Domain Dedication."),
-      p("© 2025 Sofie Halenius and contributing authors of the academic and investigative research"),
+      p("© 2025 Sofie Halenius and contributing authors of the academic and investigative research")
     )
   )
 )
@@ -79,41 +143,43 @@ server <- function(input, output, session) {
   )
   nodes$value[is.na(nodes$value)] <- 1
 
-  edges <- data.frame(
-    from = connections$from_id,
-    to = connections$to_id,
-    arrows = "to"
-  )
-
-  updateSelectInput(session, "selectedNode", choices = setNames(nodes$id, nodes$label))
+  observe({
+    updateSelectInput(session, "selectedNode", choices = setNames(nodes$id, nodes$label))
+  })
 
   output$network <- renderVisNetwork({
+    edges <- data.frame(
+      from = connections$from_id,
+      to = connections$to_id,
+      arrows = ifelse(input$arrows_to, "to", NA)
+    )
+
     visNetwork(nodes, edges) %>%
       visNodes(
         font = list(size = 14),
-        scaling = list(min = 10, max = 30)
+        scaling = list(min = input$node_min_size, max = input$node_max_size)
       ) %>%
-      visGroups(groupname = "person", color = "skyblue") %>%
-      visGroups(groupname = "group", color = "lightgreen") %>%
-      visGroups(groupname = "defunct", color = "gray") %>%
-      visGroups(groupname = "pseudoscientific theory", color = "pink") %>%
-      visEdges(smooth = FALSE, arrows = "to") %>%
+      visGroups(groupname = "person", color = input$color_person) %>%
+      visGroups(groupname = "group", color = input$color_group) %>%
+      visGroups(groupname = "defunct", color = input$color_defunct) %>%
+      visGroups(groupname = "pseudoscientific theory", color = input$color_pseudoscientific) %>%
+      visEdges(smooth = input$smooth_edges, arrows = ifelse(input$arrows_to, "to", NULL)) %>%
       visPhysics(
         enabled = TRUE,
-        solver = "barnesHut", # Switch to barnesHut for better distribution
+        solver = input$solver,
         barnesHut = list(
-          gravitationalConstant = -1500,
-          centralGravity = 0.05,
-          springLength = 150,
-          springConstant = 0.05,
-          damping = 0.5,
-          avoidOverlap = 0.4
+          gravitationalConstant = input$gravitationalConstant,
+          centralGravity = input$centralGravity,
+          springLength = input$springLength,
+          springConstant = input$springConstant,
+          damping = input$damping,
+          avoidOverlap = input$avoidOverlap
         ),
-        maxVelocity = 50,
-        stabilization = list(enabled = TRUE, iterations = 500)
+        maxVelocity = input$maxVelocity,
+        stabilization = list(enabled = TRUE, iterations = input$stabilizationIterations)
       ) %>%
       visOptions(
-        highlightNearest = list(enabled = TRUE, hover = TRUE, degree = 1),
+        highlightNearest = list(enabled = input$highlight_nearest, hover = TRUE, degree = input$highlight_degree),
         nodesIdSelection = FALSE
       ) %>%
       visLayout(randomSeed = 42)
