@@ -34,8 +34,10 @@
         let
           rEnv = pkgs.rWrapper.override {
             packages = with pkgs.rPackages; [
+              colourpicker
               shiny
               shinylive
+              shinyFeedback
               DBI
               RSQLite
               visNetwork
